@@ -1,4 +1,4 @@
-# app.py
+# -*- coding: utf-8 -*-
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 from email.parser import BytesParser
 from email.policy import default as EM_POLICY
 from email.message import EmailMessage
@@ -105,11 +105,11 @@ LOOKALIKE_DOMAINS = [
 ]
 
 HOMOGLYPH_DOMAINS = [
-    "mіcrosoft.com",
-    "paypaⅼ.com",
-    "appⅼe.com",
-    "chaѕe.com",
-    "netflіx.com",
+    "m\u0456crosoft.com",
+    "paypa\u217c.com",
+    "app\u217ce.com",
+    "cha\u0455e.com",
+    "netfl\u0456x.com",
 ]
 
 SHORTENER_DOMAINS = {
@@ -130,10 +130,24 @@ RISKY_ATTACH_EXT = {
 }
 
 HOMOGLYPH_MAP = {
-    "а": "a", "е": "e", "і": "i", "о": "o", "р": "p", "ѕ": "s",
-    "υ": "u", "х": "x", "ԁ": "d", "ԝ": "w", "ⅼ": "l",
-    "0": "o", "1": "l", "3": "e", "5": "s", "7": "t",
-    "@": "a", "$": "s",
+    "\u0430": "a",
+    "\u0435": "e",
+    "\u0456": "i",
+    "\u043e": "o",
+    "\u0440": "p",
+    "\u0455": "s",
+    "\u03c5": "u",
+    "\u0445": "x",
+    "\u04d1": "d",
+    "\u04d9": "w",
+    "\u217c": "l",
+    "0": "o",
+    "1": "l",
+    "3": "e",
+    "5": "s",
+    "7": "t",
+    "@": "a",
+    "$": "s",
 }
 
 URGENCY_WORDS = [
@@ -197,6 +211,13 @@ PHONE_RE = re.compile(r"(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?
 # -----------------------------
 # Small helpers
 # -----------------------------
+def rerun() -> None:
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -223,7 +244,7 @@ def stable_int(value: Any, mod: int) -> int:
 
 def strip_invisible(value: Any) -> str:
     value = str(value)
-    return re.sub(r"[\u200b-\u200f\u2060\ufeff\x00-\x08\x0b\x0c\x0e-\x1f]", "", value)
+    return re.sub("[\u200b-\u200f\u2060\ufeff\x00-\x08\x0b\x0c\x0e-\x1f]", "", value)
 
 
 def strip_tags(value: str) -> str:
@@ -302,6 +323,28 @@ def sanitized_preview_text(parsed: "ParsedEmail", limit: int = 3000) -> str:
     text = parsed.text or strip_tags(parsed.html)
     text = strip_invisible(html.unescape(text))
     return text[:limit]
+
+
+def action_label(action: Any) -> str:
+    if isinstance(action, ActionType):
+        return action.value
+    return str(action)
+
+
+def gate_decision_label(decision: Any) -> str:
+    if isinstance(decision, GateDecision):
+        return decision.value
+    return str(decision)
+
+
+def test_cell(value: Any) -> Any:
+    if isinstance(value, ActionType):
+        return value.value
+    if isinstance(value, GateDecision):
+        return value.value
+    if isinstance(value, float) and value != value:
+        return "NaN"
+    return value
 
 
 # -----------------------------
@@ -451,7 +494,9 @@ class MicrosoftGraphConnectorStub(EmailConnector):
     name = "microsoft-graph-stub"
 
     def fetch_next(self) -> Optional[Dict[str, Any]]:
-        raise RuntimeError("Microsoft Graph connector requires credentials and is intentionally disabled in this no-key demo.")
+        raise RuntimeError(
+            "Microsoft Graph connector requires credentials and is intentionally disabled in this no-key demo."
+        )
 
 
 class GmailConnectorStub(EmailConnector):
@@ -463,7 +508,9 @@ class GmailConnectorStub(EmailConnector):
     name = "gmail-stub"
 
     def fetch_next(self) -> Optional[Dict[str, Any]]:
-        raise RuntimeError("Gmail connector requires credentials and is intentionally disabled in this no-key demo.")
+        raise RuntimeError(
+            "Gmail connector requires credentials and is intentionally disabled in this no-key demo."
+        )
 
 
 # -----------------------------
@@ -1145,10 +1192,20 @@ def reason_agent(parsed: ParsedEmail, features: Features, enr: Enrichment, setti
     while enr.requests_used < int(settings.get("max_enrichment_requests", 2)):
         if not request_additional_enrichment(parsed, features, enr, settings):
             break
+
         evidence = build_evidence(parsed, features, enr)
         next_decision, next_confidence = classify_case(parsed, features, enr)
-        improved = next_confidence > confidence or (decision == Classification.NEEDS_INFO and next_decision != Classification.NEEDS_INFO)
-        decision, confidence = next_decision, max(confidence, next_confidence) if not improved else (next_decision, next_confidence)
+
+        improved = (
+            next_confidence > confidence
+            or (decision == Classification.NEEDS_INFO and next_decision != Classification.NEEDS_INFO)
+        )
+
+        if improved:
+            decision, confidence = next_decision, next_confidence
+        else:
+            confidence = max(confidence, next_confidence)
+
         if confidence >= 0.75:
             break
 
@@ -1180,20 +1237,34 @@ def evaluate_gate(
 
     try:
         thr = float(threshold)
+        if thr != thr:  # NaN
+            thr = 0.80
     except Exception:
         thr = 0.80
 
     if action in CONTAINMENT_ACTIONS:
         if approval_valid:
             return GateResult(GateDecision.APPROVED, True, "Valid analyst approval recorded for containment action.")
-        return GateResult(GateDecision.REQUIRES_APPROVAL, False, "Containment actions always require analyst approval, regardless of confidence.")
+        return GateResult(
+            GateDecision.REQUIRES_APPROVAL,
+            False,
+            "Containment actions always require analyst approval, regardless of confidence.",
+        )
 
     if action in READ_ONLY_ACTIONS:
         if approval_valid:
             return GateResult(GateDecision.APPROVED, True, "Valid analyst approval recorded for read-only action.")
         if conf >= thr:
-            return GateResult(GateDecision.AUTO_APPROVED, True, f"Read-only action confidence {conf:.2f} >= threshold {thr:.2f}.")
-        return GateResult(GateDecision.REQUIRES_APPROVAL, False, f"Read-only action confidence {conf:.2f} < threshold {thr:.2f}.")
+            return GateResult(
+                GateDecision.AUTO_APPROVED,
+                True,
+                f"Read-only action confidence {conf:.2f} >= threshold {thr:.2f}.",
+            )
+        return GateResult(
+            GateDecision.REQUIRES_APPROVAL,
+            False,
+            f"Read-only action confidence {conf:.2f} < threshold {thr:.2f}.",
+        )
 
     return GateResult(GateDecision.DENIED, False, "Action is not allowed by policy.")
 
@@ -1300,9 +1371,25 @@ def process_case(item: Dict[str, Any], settings: Dict[str, Any]) -> Case:
 
     case.actions = propose_actions(case)
 
-    add_log(case.id, "pipeline.parse", "parser", f"Parsed Message-ID={parsed.message_id} from={parsed.from_addr} urls={len(parsed.urls)} attachments={len(parsed.attachments)}")
-    add_log(case.id, "pipeline.features", "features", f"risk={features.risk_score:.1f} lookalike={features.lookalike_score:.1f} injection={features.injection_score:.1f}")
-    add_log(case.id, "pipeline.enrichment", "enrichment", f"Tools: check_url_reputation, check_domain_age, check_hash_reputation, lookup_known_campaign; extra_requests={enrichment.requests_used}")
+    add_log(
+        case.id,
+        "pipeline.parse",
+        "parser",
+        f"Parsed Message-ID={parsed.message_id} from={parsed.from_addr} urls={len(parsed.urls)} attachments={len(parsed.attachments)}",
+    )
+    add_log(
+        case.id,
+        "pipeline.features",
+        "features",
+        f"risk={features.risk_score:.1f} lookalike={features.lookalike_score:.1f} injection={features.injection_score:.1f}",
+    )
+    add_log(
+        case.id,
+        "pipeline.enrichment",
+        "enrichment",
+        "Tools: check_url_reputation, check_domain_age, check_hash_reputation, lookup_known_campaign; "
+        f"extra_requests={enrichment.requests_used}",
+    )
     add_log(case.id, "pipeline.agent", "agent", f"classification={classification.value} confidence={confidence:.2f}")
 
     for action in case.actions:
@@ -1310,13 +1397,25 @@ def process_case(item: Dict[str, Any], settings: Dict[str, Any]) -> Case:
         action.gate_decision = gate.decision.value
         action.confidence = confidence
 
-        add_log(case.id, "policy.proposed", "agent", f"Proposed {action.type.value} target={action.target} rationale={action.rationale}", gate.decision.value)
+        add_log(
+            case.id,
+            "policy.proposed",
+            "agent",
+            f"Proposed {action.type.value} target={action.target} rationale={action.rationale}",
+            gate.decision.value,
+        )
         add_log(case.id, "policy.gate", "policy-gate", gate.reason, gate.decision.value)
 
         if gate.execute:
             action.status = AUTO_EXECUTED
             action.decided_at = now_iso()
-            add_log(case.id, "action.execute", "policy-gate", f"Auto-executed read-only action {action.type.value}", gate.decision.value)
+            add_log(
+                case.id,
+                "action.execute",
+                "policy-gate",
+                f"Auto-executed read-only action {action.type.value}",
+                gate.decision.value,
+            )
         else:
             action.status = PENDING
 
@@ -1355,10 +1454,22 @@ def approve_action(case_id: str, action_id: str) -> None:
         action.status = APPROVED_EXECUTED
         action.analyst = "analyst"
         action.decided_at = now_iso()
-        add_log(case.id, "action.execute", "analyst", f"Approved and executed {action.type.value} target={action.target}", gate.decision.value)
+        add_log(
+            case.id,
+            "action.execute",
+            "analyst",
+            f"Approved and executed {action.type.value} target={action.target}",
+            gate.decision.value,
+        )
     else:
         action.status = DENIED
-        add_log(case.id, "action.denied", "policy-gate", f"Approval could not execute {action.type.value}: {gate.reason}", gate.decision.value)
+        add_log(
+            case.id,
+            "action.denied",
+            "policy-gate",
+            f"Approval could not execute {action.type.value}: {gate.reason}",
+            gate.decision.value,
+        )
 
     refresh_case_status(case)
 
@@ -1374,7 +1485,13 @@ def reject_action(case_id: str, action_id: str) -> None:
     action.analyst = "analyst"
     action.decided_at = now_iso()
     action.gate_decision = GateDecision.REQUIRES_APPROVAL.value
-    add_log(case.id, "action.rejected", "analyst", f"Rejected proposed action {action.type.value} target={action.target}", action.gate_decision)
+    add_log(
+        case.id,
+        "action.rejected",
+        "analyst",
+        f"Rejected proposed action {action.type.value} target={action.target}",
+        action.gate_decision,
+    )
     refresh_case_status(case)
 
 
@@ -1389,7 +1506,13 @@ def override_action(case_id: str, action_id: str) -> None:
     action.analyst = "analyst"
     action.decided_at = now_iso()
     action.override_reason = "Analyst overturned auto-executed read-only action."
-    add_log(case.id, "action.override", "analyst", f"Overrode auto-executed read-only action {action.type.value}", OVERRIDDEN)
+    add_log(
+        case.id,
+        "action.override",
+        "analyst",
+        f"Overrode auto-executed read-only action {action.type.value}",
+        OVERRIDDEN,
+    )
     refresh_case_status(case)
 
 
@@ -1571,7 +1694,6 @@ def generate_dataset() -> List[Dict[str, Any]]:
         supplier = random.choice(["global-supply-chain.example", "apex-logistics.example", "vendor-billing.example"])
         domain = random.choice([supplier, "globa1-supply-chain.example", "apex-1ogistics.example"])
         reply_domain = random.choice(LOOKALIKE_DOMAINS)
-        victim = random.choice(VICTIMS)
 
         text = (
             "Hello,\n\n"
@@ -1771,7 +1893,10 @@ def compute_metrics(cases: List[Case]) -> Dict[str, Any]:
     adversarial = {
         "prompt_injection_cases": len(injection_cases),
         "prompt_injection_flagged": sum(1 for c in injection_cases if c.features.flags.get("prompt_injection")),
-        "prompt_injection_phishing_correct": sum(1 for c in injection_cases if c.expected == Classification.PHISHING.value and c.classification.value == Classification.PHISHING.value),
+        "prompt_injection_phishing_correct": sum(
+            1 for c in injection_cases
+            if c.expected == Classification.PHISHING.value and c.classification.value == Classification.PHISHING.value
+        ),
         "homoglyph_cases": len(homoglyph_cases),
         "homoglyph_high_lookalike": sum(1 for c in homoglyph_cases if c.features.lookalike_score >= 50),
         "attachment_cases": len(attachment_cases),
@@ -1856,16 +1981,17 @@ def run_policy_tests() -> List[Dict[str, Any]]:
         except Exception as exc:
             decision = GateDecision.DENIED
             reason = f"Exception contained: {exc}"
+
         results.append({
-            "Test": test["name"],
-            "Action": str(test["action"]),
-            "Confidence": test["confidence"],
-            "Threshold": test["threshold"],
-            "Approval": test["approval"],
-            "Expected": test["expected"].value,
-            "Actual": decision.value,
+            "Test": test_cell(test["name"]),
+            "Action": action_label(test["action"]),
+            "Confidence": test_cell(test["confidence"]),
+            "Threshold": test_cell(test["threshold"]),
+            "Approval": test_cell(test["approval"]),
+            "Expected": gate_decision_label(test["expected"]),
+            "Actual": gate_decision_label(decision),
             "Passed": decision == test["expected"],
-            "Reason": reason,
+            "Reason": test_cell(reason),
         })
     return results
 
@@ -1924,10 +2050,10 @@ def run_parser_tests() -> List[Dict[str, Any]]:
     })
 
     raw4 = build_eml(
-        "Microsoft", "service@mіcrosoft.com", "Alert",
+        "Microsoft", "service@m\u0456crosoft.com", "Alert",
         "Verify account" + PROMPT_INJECTION_TEXT,
         None,
-        auth_header=auth_fail("mіcrosoft.com", "service@mіcrosoft.com"),
+        auth_header=auth_fail("m\u0456crosoft.com", "service@m\u0456crosoft.com"),
     )
     p4 = parse_eml(raw4)
     f4 = compute_features(p4, settings)
@@ -2025,7 +2151,12 @@ def initialize_app() -> None:
         st.session_state.parser_tests = run_parser_tests()
         st.session_state.initialized = True
 
-        add_log("SYSTEM", "init", "system", f"Initialization complete. Cases={len(cases)}, pending_review={sum(1 for c in cases if c.status == 'PENDING_APPROVAL')}.")
+        add_log(
+            "SYSTEM",
+            "init",
+            "system",
+            f"Initialization complete. Cases={len(cases)}, pending_review={sum(1 for c in cases if c.status == 'PENDING_APPROVAL')}.",
+        )
 
 
 # -----------------------------
@@ -2080,12 +2211,12 @@ def render_sidebar() -> None:
 
         if st.sidebar.button("Reprocess with current settings"):
             st.session_state.initialized = False
-            st.rerun()
+            rerun()
 
         if st.sidebar.button("Reset demo"):
             clear_keys(["initialized", "all_cases", "logs", "metrics", "policy_tests", "parser_tests", "settings"])
             st.session_state.settings = default_settings()
-            st.rerun()
+            rerun()
 
     st.sidebar.info("No API keys are used. Enrichment providers are deterministic mocks.")
 
@@ -2133,7 +2264,12 @@ def simulation_step() -> None:
 
 
 if hasattr(st, "fragment"):
-    @st.fragment(run_every=1.0)
+    try:
+        _live_fragment_decorator = st.fragment(run_every=1.0)
+    except Exception:
+        _live_fragment_decorator = st.fragment()
+
+    @_live_fragment_decorator
     def live_fragment() -> None:
         simulation_step()
         render_live_content()
@@ -2156,14 +2292,14 @@ def render_action_row(case: Case, action: ProposedAction) -> None:
     if action.status == PENDING:
         if cols[3].button("Approve", key=f"approve-{case.id}-{action.id}"):
             approve_action(case.id, action.id)
-            st.rerun()
+            rerun()
         if cols[4].button("Reject", key=f"reject-{case.id}-{action.id}"):
             reject_action(case.id, action.id)
-            st.rerun()
+            rerun()
     elif action.status == AUTO_EXECUTED:
         if cols[3].button("Override", key=f"override-{case.id}-{action.id}"):
             override_action(case.id, action.id)
-            st.rerun()
+            rerun()
 
 
 def render_case_review(case: Case) -> None:
@@ -2181,18 +2317,16 @@ def render_case_review(case: Case) -> None:
                 {"Header": key, "Value": display_value(value)[:180]}
                 for key, value in list(case.parsed.headers.items())[:12]
             ]
-            st.dataframe(header_rows, use_container_width=True, hide_index=True)
+            st.dataframe(header_rows)
 
         with right:
             st.markdown("**Extracted indicators**")
             st.write("**URLs**")
-            st.dataframe([{"URL": display_value(u)} for u in case.parsed.urls[:8]], use_container_width=True, hide_index=True)
+            st.dataframe([{"URL": display_value(u)} for u in case.parsed.urls[:8]])
 
             st.write("**Attachments**")
             st.dataframe(
-                [{"File": display_value(a.filename), "SHA256": a.sha256[:16] + "...", "Size": a.size} for a in case.parsed.attachments],
-                use_container_width=True,
-                hide_index=True,
+                [{"File": display_value(a.filename), "SHA256": a.sha256[:16] + "...", "Size": a.size} for a in case.parsed.attachments]
             )
 
             st.markdown("**Enrichment summary**")
@@ -2203,7 +2337,7 @@ def render_case_review(case: Case) -> None:
                 "campaign": case.enrichment.campaign,
                 "additional_requests": case.enrichment.requests_used,
             }
-            st.json(summary, expanded=False)
+            st.json(summary)
 
         st.markdown("**Evidence chain**")
         for item in case.evidence[:10]:
@@ -2220,9 +2354,7 @@ def render_case_review(case: Case) -> None:
                     "Rationale": a.rationale[:100],
                 }
                 for a in case.actions
-            ],
-            use_container_width=True,
-            hide_index=True,
+            ]
         )
 
         for action in case.actions:
@@ -2234,14 +2366,15 @@ def render_case_review(case: Case) -> None:
             case.feedback = selected
             add_log(case.id, "review.feedback", "analyst", f"Feedback saved: {selected}")
             st.session_state.metrics = compute_metrics(st.session_state.all_cases)
-            st.rerun()
+            rerun()
 
 
 def render_review_tab() -> None:
     st.subheader("Analyst review queue")
     visible = st.session_state.all_cases[:st.session_state.visible_count]
-    pending = [c for c in visible if any(a.status == PENDING for a in c.actions)]
-    resolved = [c for c in visible if c not in pending]
+    pending_ids = {c.id for c in visible if any(a.status == PENDING for a in c.actions)}
+    pending = [c for c in visible if c.id in pending_ids]
+    resolved = [c for c in visible if c.id not in pending_ids]
 
     st.write(f"Pending: **{len(pending)}** | Resolved/auto-triaged: **{len(resolved)}** | Visible: **{len(visible)}**")
 
@@ -2266,19 +2399,19 @@ def render_policy_tab() -> None:
 
     c1, c2 = st.columns(2)
     c1.markdown("**Read-only actions**")
-    c1.dataframe([{"Action": a.value} for a in sorted(READ_ONLY_ACTIONS, key=lambda x: x.value)], hide_index=True)
+    c1.dataframe([{"Action": a.value} for a in sorted(READ_ONLY_ACTIONS, key=lambda x: x.value)])
     c2.markdown("**Containment actions**")
-    c2.dataframe([{"Action": a.value} for a in sorted(CONTAINMENT_ACTIONS, key=lambda x: x.value)], hide_index=True)
+    c2.dataframe([{"Action": a.value} for a in sorted(CONTAINMENT_ACTIONS, key=lambda x: x.value)])
 
     st.subheader("Gate unit tests")
     policy_tests = st.session_state.policy_tests
     passed = sum(1 for t in policy_tests if t["Passed"])
     st.metric("Policy gate tests passed", f"{passed}/{len(policy_tests)}")
-    st.dataframe(policy_tests, use_container_width=True, hide_index=True)
+    st.dataframe(policy_tests)
 
     st.subheader("Audit log")
     st.caption("Log entries are redacted according to the sidebar policy.")
-    st.dataframe(st.session_state.logs[-500:], use_container_width=True, hide_index=True)
+    st.dataframe(st.session_state.logs[-500:])
 
 
 def render_evaluation_tab() -> None:
@@ -2289,7 +2422,7 @@ def render_evaluation_tab() -> None:
     metrics = st.session_state.metrics
 
     st.markdown("**Precision / recall per agent class**")
-    st.dataframe(metrics["class_metrics"], use_container_width=True, hide_index=True)
+    st.dataframe(metrics["class_metrics"])
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Containment proposals", metrics["containment_proposals"])
@@ -2301,10 +2434,10 @@ def render_evaluation_tab() -> None:
     st.metric("Override rate", f"{metrics['auto_override_rate'] * 100:.1f}%")
 
     st.markdown("**Per-family results**")
-    st.dataframe(metrics["family_metrics"], use_container_width=True, hide_index=True)
+    st.dataframe(metrics["family_metrics"])
 
     st.markdown("**Dataset composition**")
-    st.dataframe(metrics["family_counts"], use_container_width=True, hide_index=True)
+    st.dataframe(metrics["family_counts"])
 
     st.markdown("**Synthetic dataset creation notes**")
     st.markdown(
@@ -2328,17 +2461,17 @@ def render_evaluation_tab() -> None:
 def render_adversarial_tab() -> None:
     st.subheader("Adversarial and security regression tests")
     metrics = st.session_state.metrics
-    st.json(metrics["adversarial"], expanded=True)
+    st.json(metrics["adversarial"])
 
     st.markdown("**Parser and feature tests**")
     parser_tests = st.session_state.parser_tests
     st.metric("Parser tests passed", f"{sum(1 for t in parser_tests if t['Passed'])}/{len(parser_tests)}")
-    st.dataframe(parser_tests, use_container_width=True, hide_index=True)
+    st.dataframe(parser_tests)
 
     st.markdown("**Policy gate bypass attempts**")
     policy_tests = st.session_state.policy_tests
     st.metric("Policy tests passed", f"{sum(1 for t in policy_tests if t['Passed'])}/{len(policy_tests)}")
-    st.dataframe([t for t in policy_tests if t["Test"].startswith(("PI-", "UN-", "CT-", "AP-"))], use_container_width=True, hide_index=True)
+    st.dataframe([t for t in policy_tests if t["Test"].startswith(("PI-", "UN-", "CT-", "AP-"))])
 
 
 def render_threat_model_tab() -> None:
@@ -2534,7 +2667,6 @@ DEMO_VIDEO_HTML = """
     }
 
     if (el > 10800) {
-      panel(24, 520, 906, 0, '');
       textLine(24, 535, 'Metrics: precision/recall, false containment proposals, override rate, analyst time saved available in Evaluation tab.', '#8b949e', 11);
     }
   }
